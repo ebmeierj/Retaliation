@@ -94,30 +94,124 @@ import usb.util
 # to shoot.
 #
 COMMAND_SETS = {
-    "will" : (
-        ("zero", 0), # Zero/Park to know point (bottom-left)
-        ("led", 1), # Turn the LED on
-        ("right", 3250),
-        ("up", 540),
-        ("fire", 4), # Fire a full barrage of 4 missiles
-        ("led", 0), # Turn the LED back off
-        ("zero", 0), # Park after use for next time
-    ),
-    "tom" : (
-        ("zero", 0), 
-        ("right", 4400),
-        ("up", 200),
-        ("fire", 4),
+    "tony.wilbrand": (
         ("zero", 0),
-    ),
-    "chris" : (      # That's me - just dance around and missfire!
-        ("zero", 0),
-        ("right", 5200),
-        ("up", 500),
-        ("pause", 5000),
-        ("left", 2200),
-        ("down", 500),
+        ("led", 1),
         ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "nbahramzad" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 400),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "jebmeier" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 1800),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "trina.wulf" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 1700),
+        ("up", 700),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "jsturek" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 1800),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "matthew.juhl" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 2200),
+        ("up", 300),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "jeff.ray" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 2700),
+        ("up", 700),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "david.dirksen" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 2650),
+        ("up", 150),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "val.stehlik" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 3500),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "tjacobdesign" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 3600),
+        ("up", 700),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "jollyrancher89" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 4700),
+        ("up", 700),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "Jamish" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 4875),
+        ("up", 600),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "daryn.warriner" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 5250),
+        ("up", 475),
+        ("fire", 1),
+        ("led", 0),
+        ("zero", 0),
+    ),
+    "travis.cornelius" : (
+        ("zero", 0),
+        ("led", 1),
+        ("right", 5800),
+        ("up", 300),
+        ("fire", 1),
+        ("led", 0),
         ("zero", 0),
     ),
 }
@@ -132,13 +226,18 @@ JENKINS_NOTIFICATION_UDP_PORT   = 22222
 # The URL of your Jenkins server - used to callback to determine who broke 
 # the build.
 #
-JENKINS_SERVER                  = "http://192.168.1.100:23456"
+JENKINS_SERVER                  = "http://jenkins:8080"
 
 #
 # If you're Jenkins server is secured by HTTP basic auth, sent the
 # username and password here.  Else leave this blank.
 HTTPAUTH_USER                   = ""
 HTTPAUTH_PASS                   = ""
+
+#
+# Target users on unstable builds if this is set to true
+#
+TARGET_UNSTABLE_BUILDS = True
 
 ##########################  ENG CONFIG  #########################
 
@@ -263,18 +362,28 @@ def run_command_set(commands):
         run_command(cmd, value)
 
 
-def jenkins_target_user(user):
-    match = False
+def jenkins_target_user(users):
+    target_commands = []
+    
     # Not efficient but our user list is probably less than 1k.
     # Do a case insenstive search for convenience.
     for key in COMMAND_SETS:
-        if key.lower() == user.lower():
+        if key.lower() in users:
             # We have a command set that targets our user so got for it!
-            run_command_set(COMMAND_SETS[key])
-            match = True
+            target_commands.append(COMMAND_SETS[key])
+        
+    if not target_commands:
+        print "WARNING: No target command set defined for user %s" % users
+        return
+
+    for index, command_set in enumerate(target_commands):
+        # TODO: Need a better way to determine the maximum number of people to shoot
+        #       (since the current method assumes each person is getting shot 1 time)
+        if index >= 4:
+            # break if we have shot all our darts.
             break
-    if not match:
-        print "WARNING: No target command set defined for user %s" % user
+        run_command_set(command_set)
+
 
 
 def read_url(url):
@@ -288,17 +397,18 @@ def read_url(url):
     return urllib2.urlopen(request).read()
 
 
-def jenkins_get_responsible_user(job_name):
+def jenkins_get_responsible_user(job_name, type='lastFailedBuild'):
     # Call back to Jenkins and determin who broke the build. (Hacky)
     # We do this by crudly parsing the changes on the last failed build
-    
-    changes_url = JENKINS_SERVER + "/job/" + job_name + "/lastFailedBuild/changes"
+
+    changes_url = "%s/job/%s/%s/changes" % (JENKINS_SERVER, job_name, type)
     changedata = read_url(changes_url)
 
     # Look for the /user/[name] link
-    m = re.compile('/user/([^/"]+)').search(changedata)
+    m = re.compile('/user/([^/"]+)').findall(changedata)
     if m:
-        return m.group(1)
+        # Return an array of the lowercase names of any users who contributed to the broken build.
+        return [x.lower() for x in set(m)]
     else:
         return None
 
@@ -316,21 +426,26 @@ def jenkins_wait_for_event():
         try:
             notification_data = json.loads(data)
             status = notification_data["build"]["status"].upper()
-            phase  = notification_data["build"]["phase"].upper()
+            phase = notification_data["build"]["phase"].upper()
+            target = None
             if phase == "FINISHED" and status.startswith("FAIL"):
                 target = jenkins_get_responsible_user(notification_data["name"])
-                if target == None:
-                    print "WARNING: Could not identify the user who broke the build!"
-                    continue
+                
+            elif phase == "FINISHED" and TARGET_UNSTABLE_BUILDS and status.startswith("UNSTABLE"):
+                target = jenkins_get_responsible_user(notification_data["name"], 'lastUnstableBuild')
+                
+            if target == None:
+                print "WARNING: Could not identify the user who broke the build!"
+                continue
 
-                print "Build Failed! Targeting user: " + target
-                jenkins_target_user(target)
+            print "Build Failed! Targeting user: " + target
+            jenkins_target_user(target)
+
         except:
             pass
-                
+
 
 def main(args):
-
     if len(args) < 2:
         usage()
         sys.exit(1)
