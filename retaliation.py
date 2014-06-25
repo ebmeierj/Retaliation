@@ -397,12 +397,14 @@ def read_url(url):
     return urllib2.urlopen(request).read()
 
 
-def jenkins_get_responsible_user(job_name, type='lastFailedBuild'):
+def jenkins_get_responsible_user(job_name, fail_type='lastFailedBuild'):
     # Call back to Jenkins and determin who broke the build. (Hacky)
     # We do this by crudly parsing the changes on the last failed build
 
-    changes_url = "%s/job/%s/%s/changes" % (JENKINS_SERVER, job_name, type)
+    changes_url = "%s/job/%s/%s/changes" % (JENKINS_SERVER, job_name, fail_type)
+    print("Getting failure information from %s" % changes_url)
     changedata = read_url(changes_url)
+    print "Changedata is %s" % changedata
 
     # Look for the /user/[name] link
     m = re.compile('/user/([^/"]+)').findall(changedata)
@@ -424,22 +426,30 @@ def jenkins_wait_for_event():
     while True:
         data, addr = sock.recvfrom(8 * 1024)
         try:
+            print "Received data %s from %s" % (data, addr)
+            
             notification_data = json.loads(data)
             status = notification_data["build"]["status"].upper()
             phase = notification_data["build"]["phase"].upper()
             target = None
-            if phase == "FINISHED" and status.startswith("FAIL"):
-                target = jenkins_get_responsible_user(notification_data["name"])
+            if phase == "FINALIZED":
+                if status.startswith("FAIL"):
+                    print("Received notification of a failed build.")
+                    target = jenkins_get_responsible_user(notification_data["name"])
                 
-            elif phase == "FINISHED" and TARGET_UNSTABLE_BUILDS and status.startswith("UNSTABLE"):
-                target = jenkins_get_responsible_user(notification_data["name"], 'lastUnstableBuild')
-                
-            if target == None:
-                print "WARNING: Could not identify the user who broke the build!"
-                continue
+                elif TARGET_UNSTABLE_BUILDS and status.startswith("UNSTABLE"):
+                    print("Received notification of an unstable build.")
+                    target = jenkins_get_responsible_user(notification_data["name"], 'lastUnstableBuild')
 
-            print "Build Failed! Targeting user: " + target
-            jenkins_target_user(target)
+                else:
+                    continue
+                
+                if target == None:
+                    print "WARNING: Could not identify the user who broke the build!"
+                    continue
+
+                print "Build Failed! Targeting user: " + target
+                jenkins_target_user(target)
 
         except:
             pass
