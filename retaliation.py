@@ -79,6 +79,7 @@ import re
 import json
 import urllib2
 import base64
+import traceback
 
 import usb.core
 import usb.util
@@ -404,11 +405,11 @@ def jenkins_get_responsible_user(job_name, fail_type='lastFailedBuild'):
     changes_url = "%s/job/%s/%s/changes" % (JENKINS_SERVER, job_name, fail_type)
     print("Getting failure information from %s" % changes_url)
     changedata = read_url(changes_url)
-    print "Changedata is %s" % changedata
 
     # Look for the /user/[name] link
     m = re.compile('/user/([^/"]+)').findall(changedata)
     if m:
+        print "Regex match resulted in %s" % set(m)
         # Return an array of the lowercase names of any users who contributed to the broken build.
         return [x.lower() for x in set(m)]
     else:
@@ -426,13 +427,14 @@ def jenkins_wait_for_event():
     while True:
         data, addr = sock.recvfrom(8 * 1024)
         try:
-            print "Received data %s from %s" % (data, addr)
+            print "\nReceived data %s from %s" % (data, addr)
             
             notification_data = json.loads(data)
-            status = notification_data["build"]["status"].upper()
             phase = notification_data["build"]["phase"].upper()
             target = None
             if phase == "FINALIZED":
+                status = notification_data["build"]["status"].upper()
+                
                 if status.startswith("FAIL"):
                     print("Received notification of a failed build.")
                     target = jenkins_get_responsible_user(notification_data["name"])
@@ -442,6 +444,7 @@ def jenkins_wait_for_event():
                     target = jenkins_get_responsible_user(notification_data["name"], 'lastUnstableBuild')
 
                 else:
+                    print "Non-shameable status found: %s." % status
                     continue
                 
                 if target == None:
@@ -451,7 +454,9 @@ def jenkins_wait_for_event():
                 print "Build Failed! Targeting user: " + target
                 jenkins_target_user(target)
 
-        except:
+
+        except Exception, gene:
+            print "%s\n%s" % (str(gene), traceback.format_exc())
             pass
 
 
